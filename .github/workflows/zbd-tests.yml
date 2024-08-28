@@ -1,0 +1,38 @@
+name: ZBD Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+  - cron: '0 06 * * *'
+
+jobs:
+  zbd-tests:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc clang make util-linux build-essential llvm gawk fio udev kmod coreutils gcc-multilib g++-multilib f2fs-tools unzip wget
+          # We need at least gzip-1.13 because of a bug that causes a "gzip: stdout: Broken pipe" error when calling zgrep
+          wget https://ftp.gnu.org/gnu/gzip/gzip-1.13.zip
+          unzip gzip-1.13.zip
+          cd gzip-1.13
+          ./configure --prefix=/usr
+          make
+          sudo make install
+      - name: Build blktests
+        run: make
+      - name: Configure blktests
+        run: |
+          cat > config << EOF
+          TEST_DEVS=(/dev/${ZBD0})
+          DEVICE_ONLY=1
+          EOF
+      - name: Run ZBD Tests
+        run: sudo ./check zbd
+        env: 
+          RUN_ZONED_TESTS: 1
