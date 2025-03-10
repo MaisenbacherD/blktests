@@ -1,0 +1,53 @@
+name: Kernel Test
+on:
+  workflow_dispatch:
+
+env:
+  #TODO: To be replaced with the pull_request.sha
+  KERNEL_COMMIT_SHA: "v6.12"
+  KERNEL_TREE: "https://github.com/torvalds/linux.git"
+  #TODO REMOVE NEXT LINE!
+  KERNEL_VERSION: "v6.12"
+
+#This workflow requires two k8s actions-runner-controllers (ARC) to be active.
+#One for building the kernel and fedora image and the other one for spawning the VM resource.
+jobs:
+  build-kernel:
+    #This step runs in a container in the k8s cluster 
+    runs-on: arc-kernel-builder
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Build the fedora containerimage with the freshly build kernel
+        run: |
+          cd .github/workflows/containerfiles
+          docker build --build-arg KERNEL_TREE=${KERNEL_TREE} --build-arg KERNEL_COMMIT_SHA=${KERNEL_COMMIT_SHA} -t fedora-cloudimage -f Dockerfile.fedora-cloudimage-builder . 2>&1 | tee build.log
+          #Setting KERNEL_VERSION var which is latern needed for notifying the VM what kernel to pick up
+          cat build.log | grep KERNEL_VERSION | awk '{print $3}' | grep KERNEL_VERSION >> $GITHUB_ENV
+
+      - name: Push the new fedora containerimage with the freshly build kernel
+        run: |
+          docker tag fedora-cloudimage registry-service.docker-registry.svc.cluster.local/fedora-cloudimage:${KERNEL_VERSION}
+          docker push registry-service.docker-registry.svc.cluster.local/fedora-cloudimage:${KERNEL_VERSION}
+
+      - name: Notifying the next job to pick up the fedora image with the correct tag that we just build
+        run: |
+          echo "${KERNEL_VERSION}"
+
+  run-tests-on-kernel:
+    #This step runs in a VM with the previously compiled kernel in the k8s cluster 
+    runs-on: arc-vm-runner-set
+    needs: build-kernel
+    steps:
+      - name: Checkout blktests
+        uses: actions/checkout@v4
+        with:
+          repository: https://github.com/osandov/blktests
+          path: blktests
+
+      - name: Print debug info 
+        run: |
+          ls
+          uname -a
+          lsblk
